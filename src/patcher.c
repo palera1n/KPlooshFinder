@@ -34,25 +34,25 @@ int platform = 0;
         ops->op |= val;                \
     }
 
-void patch_kernel() {
+int patch_kernel(void) {
     printf("Starting KPlooshFinder\n");
 
     struct section_64 *data_const = macho_find_section(kernel_buf, "__DATA_CONST", "__const");
     if (!data_const) {
         printf("Unable to find data const!\n");
-        return;
+        return 1;
     }
 
     struct section_64 *cstring = macho_find_section(kernel_buf, "__TEXT", "__cstring");
     if (!cstring) {
         printf("Unable to find cstring!\n");
-        return;
+        return 1;
     }
 
     struct section_64 *text = macho_find_section(kernel_buf, "__TEXT_EXEC", "__text");
     if (!text) {
         printf("Unable to find text!\n");
-        return;
+        return 1;
     }
 
 
@@ -68,13 +68,13 @@ void patch_kernel() {
     struct mach_header_64 *apfs_kext = macho_find_kext(kernel_buf, "com.apple.filesystems.apfs");
     if (!apfs_kext) {
         printf("Unable to find APFS kext!\n");
-        return;
+        return 1;
     }
 
     struct section_64 *apfs_text = macho_find_section(apfs_kext, "__TEXT_EXEC", "__text");
     if (!apfs_text) {
         printf("Unable to find APFS text!\n");
-        return;
+        return 1;
     }
     
     patch(patch_apfs_kext, apfs_text->addr, apfs_text->size, rootvp_string_match == NULL);
@@ -82,13 +82,13 @@ void patch_kernel() {
     struct mach_header_64 *amfi_kext = macho_find_kext(kernel_buf, "com.apple.driver.AppleMobileFileIntegrity");
     if (!amfi_kext) {
         printf("Unable to find AMFI kext!\n");
-        return;
+        return 1;
     }
 
     struct section_64 *amfi_text = macho_find_section(amfi_kext, "__TEXT_EXEC", "__text");
     if (!amfi_text) {
         printf("Unable to find AMFI text!\n");
-        return;
+        return 1;
     }
 
     struct section_64 *amfi_cstring = macho_find_section(amfi_kext, "__TEXT", "__cstring");
@@ -102,13 +102,13 @@ void patch_kernel() {
     struct mach_header_64 *sandbox_kext = macho_find_kext(kernel_buf, "com.apple.security.sandbox");
     if (!sandbox_kext) {
         printf("Unable to find sandbox kext!\n");
-        return;
+        return 1;
     }
 
     struct section_64 *sandbox_text = macho_find_section(sandbox_kext, "__TEXT_EXEC", "__text");
     if (!sandbox_text) {
         printf("Unable to find sandbox text!\n");
-        return;
+        return 1;
     }
 
     //macho_run_each_kext(kernel_buf, (void *) patch_all_kexts);
@@ -143,7 +143,7 @@ fffffff006f33e30  9c 1f 67 06 f0 ff ff ff 00 00 00 00 00 00 00 00  ..g..........
 
     if (!sbops_string_match) {
         printf("Unable to find sbops string!\n");
-        return;
+        return 1;
     }
 
     const char protobox_string[] = "\"failed to initialize protobox collection: %d\" @%s:%d";
@@ -158,60 +158,63 @@ fffffff006f33e30  9c 1f 67 06 f0 ff ff ff 00 00 00 00 00 00 00 00  ..g..........
 
     patch(sbops_patch, sbops_data_const->addr, sbops_data_const->size, sbops_string_addr);
 
-    patch(patch_amfi_kext, amfi_text->addr, amfi_text->size, constraints_string_match != NULL, dev_mode_string_match != NULL);
+    patch(patch_amfi_kext, amfi_text->addr, amfi_text->size, constraints_string_match != NULL);
 
-    patch(text_exec_patches, text->addr, text->size, text->addr, rootvp_string_match != NULL, cryptex_string_match != NULL, kmap_port_string_match != NULL);
+    patch(text_exec_patches, text->addr, text->size, text->addr, rootvp_string_match != NULL, cryptex_string_match != NULL, kmap_port_string_match != NULL, dev_mode_string != NULL);
 
     if (!found_amfi_mac_syscall) {
         printf("%s: no amfi_mac_syscall\n", __FUNCTION__);
-        return;
+        return 1;
     } else if (!found_mac_unmount) {
         printf("%s: no dounmount\n", __FUNCTION__);
-        return;
+        return 1;
     } else if (!repatch_ldr_x19_vnode_pathoff) {
         printf("%s: no repatch_ldr_x19_vnode_pathoff\n", __FUNCTION__);
-        return;
+        return 1;
     } else if (!found_sbops) {
         printf("%s: no sbops?\n", __FUNCTION__);
-        return;
+        return 1;
     } else if (!amfi_ret) {
         printf("%s: no amfi_ret?\n", __FUNCTION__);
-        return;
+        return 1;
     } else if (!vnode_lookup) {
         printf("%s: no vnode_lookup\n", __FUNCTION__);
-        return;
+        return 1;
     } else if (!vnode_put) {
         printf("%s: no vnode_put\n", __FUNCTION__);
-        return;
-    } else if (offsetof_p_flags == -1) {
+        return 1;
+    } else if (offsetof_p_flags == UINT32_MAX) {
         printf("%s: no p_flags?\n", __FUNCTION__);
-        return;
+        return 1;
     } else if (!found_vm_fault_enter) {
         printf("%s: no vm_fault_enter\n", __FUNCTION__);
-        return;
+        return 1;
     } else if (!found_vm_map_protect) {
         printf("%s: no vm_map_protect\n", __FUNCTION__);
-        return;
+        return 1;
     } else if (!vfs_context_current) {
         printf("%s: no vfs_context_current\n", __FUNCTION__);
-        return;
+        return 1;
     } else if (!rootvp_string_match && !found_mac_mount) {
         printf("%s: no mac_mount\n", __FUNCTION__);
-        return;
+        return 1;
     } else if (!dyld_hook_patchpoint) {
         printf("%s: no dyld hook?\n", __FUNCTION__);
-        return;
+        return 1;
+    } else if (!rootdev_patchpoint) {
+        printf("%s: no rootdev\n", __FUNCTION__);
+        return 1;
     }
 
     if (protobox_string_match && !found_protobox) {
         printf("%s: no protobox\n", __FUNCTION__);
-        return;
+        return 1;
     } else if (dev_mode_string_match && !found_devmode) {
         printf("%s: no developer mode\n", __FUNCTION__);
-        return;
+        return 1;
     } else if (constraints_string_match && !found_launch_constraints) {
         printf("%s: no launch constraints\n", __FUNCTION__);
-        return;
+        return 1;
     }
 
     uint64_t shc_va = macho_ptr_to_va(kernel_buf, &shellcode_area[1]);
@@ -280,7 +283,7 @@ fffffff006f33e30  9c 1f 67 06 f0 ff ff ff 00 00 00 00 00 00 00 00  ..g..........
 
     if (repatch_sandbox_shellcode_ptrs[0] != 0x4141413341414132) {
         printf("%s: Sandbox shellcode corruption\n", __FUNCTION__);
-        return;
+        return 1;
     }
     // Patch offset into LDR and STR p->p_flags
     repatch_sandbox_shellcode_setuid_patch[0] |= ((offsetof_p_flags >> 2) & 0x1ff) << 10;
@@ -325,7 +328,7 @@ fffffff006f33e30  9c 1f 67 06 f0 ff ff ff 00 00 00 00 00 00 00 00  ..g..........
             patch_off > 0x7fffffcLL || patch_off < -0x8000000LL
         ) {
             printf("fsctl_shc jump too far: 0x%" PRIx64 "/0x%" PRIx64 "/0x%" PRIx64 "/0x%" PRIx64 "/0x%" PRIx64 "\n", open_off, close_off, bl_off, b_off, patch_off);
-            return;
+            return 1;
         }
 
         shellcode_from = _fsctl_shc;
@@ -359,7 +362,7 @@ fffffff006f33e30  9c 1f 67 06 f0 ff ff ff 00 00 00 00 00 00 00 00  ..g..........
     int64_t patch_off  = dyld_block - patchpoint_addr;
     if(ctx_off > 0x7fffffcLL || ctx_off < -0x8000000LL || lookup_off > 0x7fffffcLL || lookup_off < -0x8000000LL || put_off > 0x7fffffcLL || put_off < -0x8000000LL || patch_off > 0x7fffffcLL || patch_off < -0x8000000LL) {
         printf("dyld_shc: jump too far: 0x%" PRIx64 "/0x%" PRIx64 "/0x%" PRIx64 "/0x%" PRIx64 "\n", ctx_off, lookup_off, put_off, patch_off);
-        return;
+        return 1;
     }
 
     memcpy(shellcode_to, _dyld_shc, (uint64_t) _dyld_shc_end - (uint64_t) _dyld_shc);
@@ -375,7 +378,7 @@ fffffff006f33e30  9c 1f 67 06 f0 ff ff ff 00 00 00 00 00 00 00 00  ..g..........
         int64_t nvram_off = nvram_patch_to - nvram_patch_from;
         if(nvram_off > 0x7fffffcLL || nvram_off < -0x8000000LL) {
             printf("nvram_shc: jump too far: 0x%" PRIx64 "\n", nvram_off);
-            return;
+            return 1;
         }
 
         shellcode_from = _nvram_shc;
@@ -417,6 +420,7 @@ fffffff006f33e30  9c 1f 67 06 f0 ff ff ff 00 00 00 00 00 00 00 00  ..g..........
     shellcode_to += 2; /* 8 bytes */
 
     printf("Patching completed successfully.\n");
+    return 0;
 }
 
 int main(int argc, char **argv) {
@@ -469,7 +473,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    patch_kernel();
+    int retval = patch_kernel();
 
     fp = fopen(argv[2], "wb");
     if(!fp) {
@@ -484,5 +488,5 @@ int main(int argc, char **argv) {
 
     free(orig_kernel_buf);
 
-    return 0;
+    return retval;
 }

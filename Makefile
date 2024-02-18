@@ -6,9 +6,9 @@ OBJS = $(patsubst src/%,$(OBJDIR)/%,$(SRC:.c=.o)) $(PLATFORM_OBJS)
 PLOOSHFINDER = plooshfinder/libplooshfinder.a
 INCLDIRS = -I./include -I./plooshfinder/include
 
-LDFLAGS ?= 
+LDFLAGS ?=
 LDFLAGS += -L./plooshfinder
-CFLAGS ?= -O2
+CFLAGS ?= -O2 -g -Wall -Wextra -Wno-unused-parameter -Wno-unused-variable
 CC := clang
 LIBS = -lplooshfinder
 

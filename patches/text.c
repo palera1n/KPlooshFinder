@@ -28,6 +28,8 @@ bool found_task_conversion_eval_ldr = false;
 bool found_task_conversion_eval_bl = false;
 bool found_task_conversion_eval_imm = false;
 bool found_convert_port_to_map = false;
+bool found_devmode = false;
+bool text_has_devmode = false;
 
 uint32_t *fsctl_patchpoint = NULL;
 uint64_t vnode_open_addr = 0;
@@ -39,6 +41,7 @@ uint32_t *shellcode_area;
 uint32_t *dyld_hook_patchpoint;
 uint32_t *nvram_patchpoint;
 uint32_t *rootdev_patchpoint;
+extern void* kernel_buf;
 
 bool patch_mac_mount(struct pf_patch_t *patch, uint32_t *stream) {
     uint32_t* mac_mount = stream;
@@ -480,6 +483,7 @@ bool patch_dyld(struct pf_patch_t *patch, uint32_t *stream) {
     }
     // Actual match check
     const char *str = pf_follow_xref(text_rbuf, stream + 5);
+    if (!str) return false;
     if(strcmp(str, "/usr/lib/dyld") != 0)
     {
         return false;
@@ -587,6 +591,7 @@ bool patch_nvram_table(struct pf_patch_t *patch, uint32_t *stream) {
         return false;
     }
     const char *str = pf_follow_xref(text_rbuf, stream + 2);
+    if (!str) return false;
     if (strcmp(str, "aapl,pci") != 0) {
         return false;
     }
@@ -791,14 +796,15 @@ static bool patch_convert_port_to_map(struct pf_patch_t *patch, uint32_t *stream
 static bool patch_rootdev(struct pf_patch_t *patch, uint32_t *stream) {
     uint32_t adrp = stream[0],
              add  = stream[1];
-    const char *str = (const char *)(((uint64_t)(stream) & ~0xfffULL) + pf_adrp_offset(adrp) + ((add >> 10) & 0xfff));
+    const char *str = pf_follow_xref(text_rbuf, stream);
+    if (!str) return false;
     if(strcmp(str, "rootdev") != 0)
     {
         return false;
     }
 
     // Make sure this is the correct match
-    uint32_t *bl = pf_find_next(stream+2, 6, 0x94000000, 0xfc000000);
+    uint32_t *bl = pf_find_next(stream + 2, 6, 0x94000000, 0xfc000000);
     if(!bl || (bl[1] & 0xff00001f) != 0x35000000 || (bl[2] & 0xfffffe1f) != 0x3900021f) // cbnz w0, ...; strb wzr, [x{16-31}]
     {
         return false;
@@ -815,13 +821,27 @@ static bool patch_rootdev(struct pf_patch_t *patch, uint32_t *stream) {
     return true;
 }
 
-void text_exec_patches(void *real_buf, void *text_buf, size_t text_len, uint64_t text_addr, bool has_rootvp, bool has_cryptex, bool has_kmap) {
+static bool patch_developer_mode(struct pf_patch_t *patch, uint32_t *stream) {
+    if (!text_has_devmode) return false;
+    if (found_devmode) {
+        printf("%s: Found twice!\n", __FUNCTION__);
+        return false;
+    }
+    found_devmode = true;
+    stream[5] = 0x14000000 | ((&stream[0] - &stream[5]) & 0x03ffffff); // uint32 takes care of >> 2
+
+    printf("%s: Found developer mode\n", __FUNCTION__);
+    return true;
+}
+
+void text_exec_patches(void *real_buf, void *text_buf, size_t text_len, uint64_t text_addr, bool has_rootvp, bool has_cryptex, bool has_kmap, bool has_devmode){
     text_rbuf = real_buf;
     text_sect_buf = text_buf;
     text_sect_addr = text_addr;
     text_has_rootvp = has_rootvp;
     text_has_cryptex = has_cryptex;
     text_has_kmap = has_kmap;
+    text_has_devmode = has_devmode;
 
     uint32_t mount_matches[] = {
         0x321f2fe9 // orr w9, wzr, 0x1ffe
@@ -1359,6 +1379,47 @@ void text_exec_patches(void *real_buf, void *text_buf, size_t text_len, uint64_t
     };
     struct pf_patch_t rootdev = pf_construct_patch(rootdev_matches, rootdev_masks, sizeof(rootdev_matches)/sizeof(uint32_t), (void*)patch_rootdev);
 
+    // Find enable_developer_mode and disable_developer_mode in AMFI,
+    // then we patch the latter to branch to the former
+    //
+    // Example from iPad 6th gen iOS 16.0 beta 3:
+    // ;-- _enable_developer_mode:
+    // 0xfffffff007633f74      681300f0       adrp x8, 0xfffffff0078a2000
+    // 0xfffffff007633f78      08810291       add x8, x8, 0xa0
+    // 0xfffffff007633f7c      29008052       movz w9, 0x1
+    // 0xfffffff007633f80      09fd9f08       stlrb w9, [x8]
+    // 0xfffffff007633f84      c0035fd6       ret
+    // ;-- _disable_developer_mode:
+    // 0xfffffff007633f88      681300f0       adrp x8, 0xfffffff0078a2000
+    // 0xfffffff007633f8c      08810291       add x8, x8, 0xa0
+    // 0xfffffff007633f90      1ffd9f08       stlrb wzr, [x8]
+    // 0xfffffff007633f94      c0035fd6       ret
+    // /x 08000090080100912900805209010008c0035fd6080000900801009109010008c0035fd6:1f00009fff038097ffffffffff0360ceffffffff1f00009fff038097e90360ceffffffff
+
+    uint32_t devmode_matches[] = {
+        0x90000008, // adrp x8, ...
+        0x91000108, // {ldr,add} x8, [x8, ...]
+        0x52800029, // mov w9, #0x1
+        0x08000109, // str{l,}b w9, [x8]
+        ret, // ret
+        0x90000008, // adrp x8, ...
+        0x91000108, // {ldr,add} x8, [x8, ...]
+        0x08000109, // str{l,}b wzr, [x8]
+        ret, // ret
+    };
+    uint32_t devmode_masks[] = {
+        0x9f00001f,
+        0x978003ff,
+        0xffffffff,
+        0xce6003ff,
+        0xffffffff,
+        0x9f00001f,
+        0x978003ff,
+        0xce6003e9,
+        0xffffffff,
+    };
+    struct pf_patch_t developer_mode = pf_construct_patch(devmode_matches, devmode_masks, sizeof(devmode_matches) / sizeof(uint32_t), (void *) patch_developer_mode);
+
     struct pf_patch_t patches[] = {
         mac_mount_patch,
         mac_mount_patch_alt,
@@ -1392,7 +1453,8 @@ void text_exec_patches(void *real_buf, void *text_buf, size_t text_len, uint64_t
         kmap,
         kmap_alt,
         kmap155,
-        rootdev
+        rootdev,
+        developer_mode
     };
 
     struct pf_patchset_t patchset = pf_construct_patchset(patches, sizeof(patches) / sizeof(struct pf_patch_t), (void *) pf_find_maskmatch32);

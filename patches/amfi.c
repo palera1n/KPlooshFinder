@@ -7,12 +7,10 @@
 #include "patches/amfi.h"
 
 uint32_t *amfi_ret;
-uint32_t offsetof_p_flags = -1;
+uint32_t offsetof_p_flags = UINT32_MAX;
 void *amfi_rbuf = 0;
 bool amfi_has_constraints = false;
-bool amfi_has_devmode = false;
 bool found_launch_constraints = false;
-bool found_devmode;
 bool found_amfi_mac_syscall = false;
 bool found_trustcache = false;
 
@@ -188,18 +186,6 @@ bool patch_launch_constraints(struct pf_patch_t *patch, uint32_t *stream) {
     return true;
 }
 
-static bool patch_developer_mode(struct pf_patch_t *patch, uint32_t *stream) {
-    if (found_devmode) {
-        printf("%s: Found twice!\n", __FUNCTION__);
-        return true;
-    }
-    found_devmode = true;
-    stream[5] = 0x14000000 | ((&stream[0] - &stream[5]) & 0x03ffffff); // uint32 takes care of >> 2
-
-    printf("%s: Found developer mode\n", __FUNCTION__);
-    return true;
-}
-
 bool patch_trustcache_old(struct pf_patch_t *patch, uint32_t *stream) {
     if(found_trustcache) {
         printf("%s: Found more then one trustcache call\n", __FUNCTION__);
@@ -255,9 +241,8 @@ bool patch_trustcache_new(struct pf_patch_t *patch, uint32_t *stream) {
     return true;
 }
 
-void patch_amfi_kext(void *real_buf, void *amfi_buf, size_t amfi_len, bool has_constraints, bool has_devmode) {
+void patch_amfi_kext(void *real_buf, void *amfi_buf, size_t amfi_len, bool has_constraints) {
     amfi_rbuf = real_buf;
-    amfi_has_devmode = has_devmode;
     amfi_has_constraints = has_constraints;
 
     // r2: /x 080240b90000003409408452:1ffeffff1f0080ffffffffff
@@ -345,46 +330,6 @@ void patch_amfi_kext(void *real_buf, void *amfi_buf, size_t amfi_len, bool has_c
     };
     struct pf_patch_t launch_constraints = pf_construct_patch(constraint_matches, constraint_masks, sizeof(constraint_matches) / sizeof(uint32_t), (void *) patch_launch_constraints);
 
-    // Find enable_developer_mode and disable_developer_mode in AMFI,
-    // then we patch the latter to branch to the former
-    //
-    // Example from iPad 6th gen iOS 16.0 beta 3:
-    // ;-- _enable_developer_mode:
-    // 0xfffffff007633f74      681300f0       adrp x8, 0xfffffff0078a2000
-    // 0xfffffff007633f78      08810291       add x8, x8, 0xa0
-    // 0xfffffff007633f7c      29008052       movz w9, 0x1
-    // 0xfffffff007633f80      09fd9f08       stlrb w9, [x8]
-    // 0xfffffff007633f84      c0035fd6       ret
-    // ;-- _disable_developer_mode:
-    // 0xfffffff007633f88      681300f0       adrp x8, 0xfffffff0078a2000
-    // 0xfffffff007633f8c      08810291       add x8, x8, 0xa0
-    // 0xfffffff007633f90      1ffd9f08       stlrb wzr, [x8]
-    // 0xfffffff007633f94      c0035fd6       ret
-    // /x 08000090080000002900805209010008c0035fd608000090080000001f010008c0035fd6:1f00009fff000000ffffffffff03600effffffff1f00009fff000000ff03600effffffff
-
-    uint32_t devmode_matches[] = {
-        0x90000008, // adrp x8, ...
-        0x00000008, // {ldr,add} x8, [x8, ...]
-        0x52800029, // mov w9, #0x1
-        0x08000109, // str{l,}b w9, [x8]
-        0xd65f03c0, // ret
-        0x90000008, // adrp x8, ...
-        0x00000008, // {ldr,add} x8, [x8, ...]
-        0x0800011f, // str{l,}b wzr, [x8]
-        0xd65f03c0, // ret
-    };
-    uint32_t devmode_masks[] = {
-        0x000000ff,
-        0xffffffff,
-        0x0e6003ff,
-        0xffffffff,
-        0x9f00001f,
-        0x000000ff,
-        0x0e6003ff,
-        0xffffffff,
-    };
-    struct pf_patch_t developer_mode = pf_construct_patch(devmode_matches, devmode_masks, sizeof(devmode_matches) / sizeof(uint32_t), (void *) patch_developer_mode);
-
     // r2: /x 28208052
     uint32_t trustcache_matches_old[] = {
         0x52802028 // mov w8, 0x101
@@ -420,7 +365,6 @@ void patch_amfi_kext(void *real_buf, void *amfi_buf, size_t amfi_len, bool has_c
         mac_syscall_patch_alt,
         mac_syscall_patch_low,
         launch_constraints,
-        developer_mode,
         trustcache_old,
         trustcache_new
     };

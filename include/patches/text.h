@@ -14,6 +14,7 @@ extern bool found_task_conversion_eval_ldr;
 extern bool found_task_conversion_eval_bl;
 extern bool found_task_conversion_eval_imm;
 extern bool found_convert_port_to_map;
+extern bool found_devmode;
 
 extern uint32_t *vnode_gaddr;
 extern uint32_t repatch_ldr_x19_vnode_pathoff;
@@ -26,6 +27,6 @@ extern uint32_t *dyld_hook_patchpoint;
 extern uint32_t *nvram_patchpoint;
 extern uint32_t* rootdev_patchpoint;
 
-void text_exec_patches(void *real_buf, void *text_buf, size_t text_len, uint64_t text_addr, bool has_rootvp, bool has_cryptex, bool has_kmap);
+void text_exec_patches(void *real_buf, void *text_buf, size_t text_len, uint64_t text_addr, bool has_rootvp, bool has_cryptex, bool has_kmap, bool has_devmode);
 
 #endif

@@ -42,11 +42,13 @@ bool patch_protobox(struct pf_patch_t *patch, uint32_t *stream)
     if (!sandbox_has_protobox) return false;
     uint32_t adrp1 = stream[0],
              add1  = stream[1];
-    const char *str1 = (const char *)(((uint64_t)(stream) & ~0xfffULL) + pf_adrp_offset(adrp1) + ((add1 >> 10) & 0xfff));
+    const char *str1 = pf_follow_xref(sandbox_rbuf, &stream[0]);
+    if (!str1) return false;
 
     uint32_t adrp2 = stream[4],
              add2  = stream[5];
-    const char *str2 = (const char *)(((uint64_t)(stream) & ~0xfffULL) + pf_adrp_offset(adrp2) + ((add2 >> 10) & 0xfff));
+    const char *str2 = pf_follow_xref(sandbox_rbuf, &stream[4]);
+    if (!str2) return false;
 
     if (!strcmp(str1, "Restore") && !strcmp(str2, "Darwin")) {
         // Make protobox think this device is in "Restore" mode

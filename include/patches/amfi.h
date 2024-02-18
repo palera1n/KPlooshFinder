@@ -10,8 +10,7 @@ extern bool found_trustcache;
 extern uint32_t offsetof_p_flags;
 extern bool found_protobox;
 extern bool found_launch_constraints;
-extern bool found_devmode;
 
-void patch_amfi_kext(void *real_buf, void *amfi_buf, size_t amfi_len, bool has_constraints, bool has_devmode);
+void patch_amfi_kext(void *real_buf, void *amfi_buf, size_t amfi_len, bool has_constraints);
 
 #endif
