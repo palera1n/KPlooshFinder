@@ -77,7 +77,15 @@ int patch_kernel(void) {
         return 1;
     }
     
-    patch(patch_apfs_kext, apfs_text->addr, apfs_text->size, rootvp_string_match == NULL);
+    struct section_64 *livefs_cstring = macho_find_section(apfs_kext, "__TEXT", "__cstring");
+    if (!livefs_cstring) {
+        livefs_cstring = cstring;
+    }
+
+    const char livefs_string[] = "Rooting from the live fs of a sealed volume is not allowed on a RELEASE build";
+    const char* livefs_string_match = find_partial_str_in_region(livefs_string, addr_to_ptr(livefs_cstring->addr), livefs_cstring->size);
+
+    patch(patch_apfs_kext, apfs_text->addr, apfs_text->size, rootvp_string_match == NULL, livefs_string_match != NULL);
 
     struct mach_header_64 *amfi_kext = macho_find_kext(kernel_buf, "com.apple.driver.AppleMobileFileIntegrity");
     if (!amfi_kext) {
@@ -115,6 +123,13 @@ int patch_kernel(void) {
 
     patch(patch_mach_traps, data_const->addr, data_const->size);
 
+    struct section_64* protobox_cstring = macho_find_section(sandbox_kext, "__TEXT", "__cstring");
+    if (!protobox_cstring) protobox_cstring = cstring;
+    const char protobox_string[] = "\"failed to initialize protobox collection: %d\" @%s:%d";
+    const char *protobox_string_match = find_str_in_region(protobox_cstring, addr_to_ptr(protobox_cstring->addr), protobox_cstring->size);
+
+    patch(patch_sandbox_kext, sandbox_text->addr, sandbox_text->size, protobox_string_match != NULL);
+
     // sbops useful shit
     /*
     fffffff006f33d98  data_fffffff006f33d98:
@@ -146,15 +161,13 @@ fffffff006f33e30  9c 1f 67 06 f0 ff ff ff 00 00 00 00 00 00 00 00  ..g..........
         return 1;
     }
 
-    const char protobox_string[] = "\"failed to initialize protobox collection: %d\" @%s:%d";
-    const char *protobox_string_match = find_str_in_region(protobox_string, sbops_cstring_addr, sbops_cstring->size);
-
+    struct section_64 *plk_data_const = macho_find_section(kernel_buf, "__PLK_DATA_CONST", "__data");
     struct section_64 *sandbox_data_const = macho_find_section(sandbox_kext, "__DATA_CONST", "__const");
+
     struct section_64 *sbops_data_const = sandbox_cstring ? sandbox_data_const : data_const;
+    if (plk_data_const) sbops_data_const = plk_data_const;
     
     uint64_t sbops_string_addr = sbops_cstring->addr + (uint64_t) ((void *) sbops_string_match - sbops_cstring_addr);
-
-    patch(patch_sandbox_kext, sandbox_text->addr, sandbox_text->size, protobox_string_match != NULL);
 
     patch(sbops_patch, sbops_data_const->addr, sbops_data_const->size, sbops_string_addr);
 
