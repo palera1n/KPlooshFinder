@@ -390,20 +390,6 @@ fffffff006f33e30  9c 1f 67 06 f0 ff ff ff 00 00 00 00 00 00 00 00  ..g..........
         *nvram_patchpoint = 0x14000000 | (((uint64_t)nvram_off >> 2) & 0x3ffffff);
     }
 
-    if (!rootvp_string_match) {
-        const char *snapshot = "com.apple.os.update-";
-        struct section_64 *apfs_cstring = macho_find_section(apfs_kext, "__TEXT", "__cstring");
-        struct section_64 *snapshot_cstring = apfs_cstring ? apfs_cstring : cstring;
-        void *snapshot_cstring_addr = apfs_cstring ? addr_to_ptr(apfs_cstring->addr) : kernel_buf + cstring->offset;
-
-        char *snapshotStr = find_str_in_region(snapshot, snapshot_cstring_addr, snapshot_cstring->size);
-
-        if (snapshotStr) {
-            *snapshotStr = 'x';
-            printf("%s: Disabled snapshot temporarily\n", __FUNCTION__);
-        }
-    }
-
     uint64_t rootdev_patchpoint_addr = macho_ptr_to_va(kernel_buf, rootdev_patchpoint);
     uint64_t rootdev_shellcode_addr = macho_ptr_to_va(kernel_buf, shellcode_to);
    
@@ -418,6 +404,20 @@ fffffff006f33e30  9c 1f 67 06 f0 ff ff ff 00 00 00 00 00 00 00 00  ..g..........
     memcpy(shellcode_to, "spartan", 8);
 
     shellcode_to += 2; /* 8 bytes */
+
+    if (!rootvp_string_match) {
+        const char *snapshot = "com.apple.os.update-";
+        struct section_64 *apfs_cstring = macho_find_section(apfs_kext, "__TEXT", "__cstring");
+        struct section_64 *snapshot_cstring = apfs_cstring ? apfs_cstring : cstring;
+        void *snapshot_cstring_addr = apfs_cstring ? addr_to_ptr(apfs_cstring->addr) : kernel_buf + cstring->offset;
+
+        char *snapshotStr = find_str_in_region(snapshot, snapshot_cstring_addr, snapshot_cstring->size);
+
+        if (snapshotStr) {
+            *snapshotStr = 'x';
+            printf("%s: Disabled snapshot temporarily\n", __FUNCTION__);
+        }
+    }
 
     printf("Patching completed successfully.\n");
     return 0;

@@ -1115,6 +1115,7 @@ void text_exec_patches(void *real_buf, void *text_buf, size_t text_len, uint64_t
     // get rid of this
     {
         count += (_sandbox_shellcode_end - _sandbox_shellcode);
+        count += 2; /* new rootdev string */
         //+ (kdi_shc_end - kdi_shc) + (fsctl_shc_end - fsctl_shc);
     }
     uint32_t shc_matches[count];
