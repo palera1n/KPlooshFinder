@@ -1,3 +1,4 @@
+#if 0
 #include <stdint.h>
 #include <stdio.h>
 #include <stdbool.h>
@@ -33,3 +34,4 @@ void patch_all_kexts(void *real_buf, void *kext_buf, size_t kext_len) {
 
     pf_patchset_emit(kext_buf, kext_len, patchset);
 }
+#endif

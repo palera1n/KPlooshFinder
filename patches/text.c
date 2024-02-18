@@ -38,6 +38,7 @@ uint64_t ret0_gadget;
 uint32_t *shellcode_area;
 uint32_t *dyld_hook_patchpoint;
 uint32_t *nvram_patchpoint;
+uint32_t *rootdev_patchpoint;
 
 bool patch_mac_mount(struct pf_patch_t *patch, uint32_t *stream) {
     uint32_t* mac_mount = stream;
@@ -787,6 +788,33 @@ static bool patch_convert_port_to_map(struct pf_patch_t *patch, uint32_t *stream
     return true;
 }
 
+static bool patch_rootdev(struct pf_patch_t *patch, uint32_t *stream) {
+    uint32_t adrp = stream[0],
+             add  = stream[1];
+    const char *str = (const char *)(((uint64_t)(stream) & ~0xfffULL) + pf_adrp_offset(adrp) + ((add >> 10) & 0xfff));
+    if(strcmp(str, "rootdev") != 0)
+    {
+        return false;
+    }
+
+    // Make sure this is the correct match
+    uint32_t *bl = pf_find_next(stream+2, 6, 0x94000000, 0xfc000000);
+    if(!bl || (bl[1] & 0xff00001f) != 0x35000000 || (bl[2] & 0xfffffe1f) != 0x3900021f) // cbnz w0, ...; strb wzr, [x{16-31}]
+    {
+        return false;
+    }
+
+    if(rootdev_patchpoint)
+    {
+        printf("%s: Found twice\n", __FUNCTION__);
+        return false;
+    }
+    rootdev_patchpoint = stream;
+
+    printf("%s: Found rootdev\n", __FUNCTION__);
+    return true;
+}
+
 void text_exec_patches(void *real_buf, void *text_buf, size_t text_len, uint64_t text_addr, bool has_rootvp, bool has_cryptex, bool has_kmap) {
     text_rbuf = real_buf;
     text_sect_buf = text_buf;
@@ -1157,15 +1185,15 @@ void text_exec_patches(void *real_buf, void *text_buf, size_t text_len, uint64_t
 
     uint32_t nvram164_matches[] = {
         0x90000010, // adrp xN, 0x...
-        0x91000210, // add xN, xN, 0x438
+        0x91000210, // add xN, xN, 0x...
         0x90000000, // adrp x0, 0x...
-        0x91000000, // add x0, x0, 0x32b
+        0x91000000, // add x0, x0, 0x...
         0xaa1003e1, // mov x1, x{16-31}
         0x94000000, // bl sym._strcmp
         0x34000060, // cbz w0, .+12
-        0xf8410e00, // ldr x0, [xN, 0x10]!
+        0xf8400c00, // ldr x0, [xN, ...]!
         0xb5ffff80, // cbnz x0, .-16
-        0xf9400610  // ldr x{16-31}, [xN, 8]
+        0xf9400610, // ldr x{16-31}, [xN, 8]
     };
     uint32_t nvram164_masks[] = {
         0x9f000010,
@@ -1175,9 +1203,9 @@ void text_exec_patches(void *real_buf, void *text_buf, size_t text_len, uint64_t
         0xfff0ffff,
         0xfc000000,
         0xffffffff,
-        0xfffffe1f,
+        0xffe00c1f,
         0xffffffff,
-        0xfffffe10
+        0xfffffe10,
     };
 
     struct pf_patch_t nvram164 = pf_construct_patch(nvram164_matches, nvram164_masks, sizeof(nvram164_matches) / sizeof(uint32_t), (void *) patch_nvram_table);
@@ -1309,6 +1337,27 @@ void text_exec_patches(void *real_buf, void *text_buf, size_t text_len, uint64_t
 
     struct pf_patch_t kmap155 = pf_construct_patch(kmap_matches155, kmap_masks155, sizeof(kmap_matches155) / sizeof(uint32_t), (void *) patch_convert_port_to_map);
 
+    // A ton of kexts check for "rd=md*" and "rootdev=md*" in order to determine whether we're restoring.
+    // We previously tried to patch all of those, but that is really tedious to do, and it's basically
+    // impossible to determine whether you found all instances.
+    // What we do now is just change the place that actually boots off the ramdisk from "rootdev" to "spartan",
+    // and then patch the boot-args string to reflect that.
+    //
+    // Because codegen orders function args differently across versions and may or may not inline stuff,
+    // we just match adrp+add to either x0 or x1, and check the string and the rest in the callback.
+    //
+    // /x 0000009000000091:1e00009fde03c0ff
+    uint32_t rootdev_matches[] =
+    {
+        0x90000000, // adrp x{0|1}, 0x...
+        0x91000000, // add x{0|1}, x{0|1}, 0x...
+    };
+    uint32_t rootdev_masks[] =
+    {
+        0x9f00001e,
+        0xffc003de,
+    };
+    struct pf_patch_t rootdev = pf_construct_patch(rootdev_matches, rootdev_masks, sizeof(rootdev_matches)/sizeof(uint32_t), (void*)patch_rootdev);
 
     struct pf_patch_t patches[] = {
         mac_mount_patch,
@@ -1342,7 +1391,8 @@ void text_exec_patches(void *real_buf, void *text_buf, size_t text_len, uint64_t
         tce_imm,
         kmap,
         kmap_alt,
-        kmap155
+        kmap155,
+        rootdev
     };
 
     struct pf_patchset_t patchset = pf_construct_patchset(patches, sizeof(patches) / sizeof(struct pf_patch_t), (void *) pf_find_maskmatch32);

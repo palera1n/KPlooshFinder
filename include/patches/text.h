@@ -24,7 +24,8 @@ extern uint64_t vnode_close_addr;
 extern uint32_t *shellcode_area;
 extern uint32_t *dyld_hook_patchpoint;
 extern uint32_t *nvram_patchpoint;
+extern uint32_t* rootdev_patchpoint;
 
-void text_exec_patches(void *real_buf, void *text_buf, size_t text_len, uint64_t text_addr, bool has_rootvp, bool has_cryptexv, bool has_kmap);
+void text_exec_patches(void *real_buf, void *text_buf, size_t text_len, uint64_t text_addr, bool has_rootvp, bool has_cryptex, bool has_kmap);
 
 #endif

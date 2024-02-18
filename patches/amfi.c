@@ -12,6 +12,7 @@ void *amfi_rbuf = 0;
 bool amfi_has_constraints = false;
 bool amfi_has_devmode = false;
 bool found_launch_constraints = false;
+bool found_devmode;
 bool found_amfi_mac_syscall = false;
 bool found_trustcache = false;
 
@@ -151,7 +152,7 @@ bool patch_amfi_mac_syscall(struct pf_patch_t *patch, uint32_t *stream) {
 bool patch_amfi_mac_syscall_low(struct pf_patch_t *patch, uint32_t *stream) {
     // Unlike the other matches, the case we want is *not* the fallthrough one here.
     // So we need to follow the b.eq for 0x5a here.
-    return patch_amfi_mac_syscall(patch, stream + 3 + pf_signextend_32(stream[3] >> 5, 19)); // uint32 takes care of << 2
+    return patch_amfi_mac_syscall(patch, stream + 1 + pf_signextend_32(stream[1] >> 5, 19)); // uint32 takes care of << 2
 }
 
 bool patch_launch_constraints(struct pf_patch_t *patch, uint32_t *stream) {
@@ -161,7 +162,7 @@ bool patch_launch_constraints(struct pf_patch_t *patch, uint32_t *stream) {
         printf("%s: Found launch constraints more than once\n", __FUNCTION__);
         return false;
     }
-    found_launch_constraints = true;
+
     printf("%s: Found launch constraints\n", __FUNCTION__);
 
     uint32_t *stp = pf_find_prev(stream, 0x200, 0xa9007bfd, 0xffc07fff); // stp x29, x30, [sp, ...]
@@ -183,51 +184,17 @@ bool patch_launch_constraints(struct pf_patch_t *patch, uint32_t *stream) {
 
     start[0] = 0x52800000; // mov w0, 0
     start[1] = ret;
+    found_launch_constraints = true;
     return true;
 }
 
-bool patch_developer_mode(struct pf_patch_t *patch, uint32_t *stream) {
-    if (!amfi_has_devmode) return false;
-
-    static uint32_t *enable_developer_mode  = NULL,
-                    *disable_developer_mode = NULL;
-
-    const char enable[]  = "AMFI: Enabling developer mode since ",
-               disable[] = "AMFI: Disable developer mode since ";
-
-    const char *str = pf_follow_xref(amfi_rbuf, stream);
-    // Enable
-    if(strncmp(str, enable, sizeof(enable) - 1) == 0)
-    {
-        if(enable_developer_mode)
-        {
-            return false;
-        }
-        enable_developer_mode = pf_follow_branch(amfi_rbuf, stream + 3);
+static bool patch_developer_mode(struct pf_patch_t *patch, uint32_t *stream) {
+    if (found_devmode) {
+        printf("%s: Found twice!\n", __FUNCTION__);
+        return true;
     }
-    // Disable
-    else if(strncmp(str, disable, sizeof(disable) - 1) == 0)
-    {
-        if(disable_developer_mode)
-        {
-            return false;
-        }
-        disable_developer_mode = pf_follow_branch(amfi_rbuf, stream + 3);
-    }
-    // Ignore the rest
-    else
-    {
-        return false;
-    }
-
-    // Only return success once we found both enable and disable
-    if(!enable_developer_mode || !disable_developer_mode)
-    {
-        return false;
-    }
-
-    // Now that we have both, just redirect disable to enable :P
-    disable_developer_mode[0] = 0x14000000 | ((enable_developer_mode - disable_developer_mode) & 0x03ffffff); // uint32 takes care of >> 2
+    found_devmode = true;
+    stream[5] = 0x14000000 | ((&stream[0] - &stream[5]) & 0x03ffffff); // uint32 takes care of >> 2
 
     printf("%s: Found developer mode\n", __FUNCTION__);
     return true;
@@ -341,8 +308,6 @@ void patch_amfi_kext(void *real_buf, void *amfi_buf, size_t amfi_len, bool has_c
 
     // r2: /x 3f7801710c0000543f680171000000543f6c017101000054:ffffffff1f0000ffffffffff1f0000ffffffffff1f0000ff
     uint32_t iiii_matches[] = {
-        0x7101783f, // cmp w1, 0x5e
-        0x5400000c, // b.gt
         0x7101683f, // cmp w1, 0x5a
         0x54000000, // b.eq
         0x71016c3f, // cmp w1, 0x5b
@@ -353,39 +318,70 @@ void patch_amfi_kext(void *real_buf, void *amfi_buf, size_t amfi_len, bool has_c
         0xff00001f,
         0xffffffff,
         0xff00001f,
-        0xffffffff,
-        0xff00001f,
     };
     struct pf_patch_t mac_syscall_patch_low = pf_construct_patch(iiii_matches, iiii_masks, sizeof(iiii_matches) / sizeof(uint32_t), (void *) patch_amfi_mac_syscall_low);
 
     uint32_t constraint_matches[] = {
-        0x52806088, // mov w8, 0x304
-        0x14000000, // b 0x...
-        0x52802088, // mov w8, 0x104
-        0x14000000, // b 0x...
-        0x52804088, // mov w8, 0x204
+        0xaa0003f0, // mov x{16-31}, x0
+        0x910003e0, // add x0, sp, ...
+        0x94000000, // bl
+        0xaa0003f0, // mov x{16-31}, x0
+        0x910003e0, // add x0, sp, ...
+        0x94000000, // bl
+        0x2a0003e8, // mov w8, w0
+        0xa902a3f0, // stp x{16-31}, x8 [sp, #0x28]
+        0xa901c3f0, // stp x{16-31}, x{16-31} [sp, #0x18]
     };
     uint32_t constraint_masks[] = {
-        0xffffffff,
+        0xffff03f0,
+        0xffc003ff,
+        0xfc000000,
+        0xffff03f0,
+        0xffc003ff,
         0xfc000000,
         0xffffffff,
-        0xfc000000,
-        0xffffffff,
+        0xfffffff0,
+        0xffffc3f0,
     };
     struct pf_patch_t launch_constraints = pf_construct_patch(constraint_matches, constraint_masks, sizeof(constraint_matches) / sizeof(uint32_t), (void *) patch_launch_constraints);
 
-    // /x 00000090000000910000009400000094:1f00009fff03c0ff000000fc000000fc
+    // Find enable_developer_mode and disable_developer_mode in AMFI,
+    // then we patch the latter to branch to the former
+    //
+    // Example from iPad 6th gen iOS 16.0 beta 3:
+    // ;-- _enable_developer_mode:
+    // 0xfffffff007633f74      681300f0       adrp x8, 0xfffffff0078a2000
+    // 0xfffffff007633f78      08810291       add x8, x8, 0xa0
+    // 0xfffffff007633f7c      29008052       movz w9, 0x1
+    // 0xfffffff007633f80      09fd9f08       stlrb w9, [x8]
+    // 0xfffffff007633f84      c0035fd6       ret
+    // ;-- _disable_developer_mode:
+    // 0xfffffff007633f88      681300f0       adrp x8, 0xfffffff0078a2000
+    // 0xfffffff007633f8c      08810291       add x8, x8, 0xa0
+    // 0xfffffff007633f90      1ffd9f08       stlrb wzr, [x8]
+    // 0xfffffff007633f94      c0035fd6       ret
+    // /x 08000090080000002900805209010008c0035fd608000090080000001f010008c0035fd6:1f00009fff000000ffffffffff03600effffffff1f00009fff000000ff03600effffffff
+
     uint32_t devmode_matches[] = {
-        0x90000000, // adrp
-        0x91000000, // add
-        0x94000000, // bl
-        0x94000000, // bl
+        0x90000008, // adrp x8, ...
+        0x00000008, // {ldr,add} x8, [x8, ...]
+        0x52800029, // mov w9, #0x1
+        0x08000109, // str{l,}b w9, [x8]
+        0xd65f03c0, // ret
+        0x90000008, // adrp x8, ...
+        0x00000008, // {ldr,add} x8, [x8, ...]
+        0x0800011f, // str{l,}b wzr, [x8]
+        0xd65f03c0, // ret
     };
     uint32_t devmode_masks[] = {
+        0x000000ff,
+        0xffffffff,
+        0x0e6003ff,
+        0xffffffff,
         0x9f00001f,
-        0xffc003ff,
-        0xfc000000,
-        0xfc000000,
+        0x000000ff,
+        0x0e6003ff,
+        0xffffffff,
     };
     struct pf_patch_t developer_mode = pf_construct_patch(devmode_matches, devmode_masks, sizeof(devmode_matches) / sizeof(uint32_t), (void *) patch_developer_mode);
 

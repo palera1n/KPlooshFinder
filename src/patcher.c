@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <inttypes.h>
 
 #include "formats/macho.h"
 #include "plooshfinder.h"
@@ -98,8 +99,6 @@ void patch_kernel() {
     const char dev_mode_string[] = "AMFI: developer mode is force enabled\n";
     const char *dev_mode_string_match = find_str_in_region(dev_mode_string, devmode_straddr, devmode_cstring->size);
 
-    patch(patch_amfi_kext, amfi_text->addr, amfi_text->size, constraints_string_match != NULL, dev_mode_string_match != NULL);
-
     struct mach_header_64 *sandbox_kext = macho_find_kext(kernel_buf, "com.apple.security.sandbox");
     if (!sandbox_kext) {
         printf("Unable to find sandbox kext!\n");
@@ -112,9 +111,7 @@ void patch_kernel() {
         return;
     }
 
-    patch(patch_sandbox_kext, sandbox_text->addr, sandbox_text->size);
-
-    macho_run_each_kext(kernel_buf, (void *) patch_all_kexts);
+    //macho_run_each_kext(kernel_buf, (void *) patch_all_kexts);
 
     patch(patch_mach_traps, data_const->addr, data_const->size);
 
@@ -149,12 +146,19 @@ fffffff006f33e30  9c 1f 67 06 f0 ff ff ff 00 00 00 00 00 00 00 00  ..g..........
         return;
     }
 
+    const char protobox_string[] = "\"failed to initialize protobox collection: %d\" @%s:%d";
+    const char *protobox_string_match = find_str_in_region(protobox_string, sbops_cstring_addr, sbops_cstring->size);
+
     struct section_64 *sandbox_data_const = macho_find_section(sandbox_kext, "__DATA_CONST", "__const");
     struct section_64 *sbops_data_const = sandbox_cstring ? sandbox_data_const : data_const;
     
     uint64_t sbops_string_addr = sbops_cstring->addr + (uint64_t) ((void *) sbops_string_match - sbops_cstring_addr);
 
+    patch(patch_sandbox_kext, sandbox_text->addr, sandbox_text->size, protobox_string_match != NULL);
+
     patch(sbops_patch, sbops_data_const->addr, sbops_data_const->size, sbops_string_addr);
+
+    patch(patch_amfi_kext, amfi_text->addr, amfi_text->size, constraints_string_match != NULL, dev_mode_string_match != NULL);
 
     patch(text_exec_patches, text->addr, text->size, text->addr, rootvp_string_match != NULL, cryptex_string_match != NULL, kmap_port_string_match != NULL);
 
@@ -196,6 +200,17 @@ fffffff006f33e30  9c 1f 67 06 f0 ff ff ff 00 00 00 00 00 00 00 00  ..g..........
         return;
     } else if (!dyld_hook_patchpoint) {
         printf("%s: no dyld hook?\n", __FUNCTION__);
+        return;
+    }
+
+    if (protobox_string_match && !found_protobox) {
+        printf("%s: no protobox\n", __FUNCTION__);
+        return;
+    } else if (dev_mode_string_match && !found_devmode) {
+        printf("%s: no developer mode\n", __FUNCTION__);
+        return;
+    } else if (constraints_string_match && !found_launch_constraints) {
+        printf("%s: no launch constraints\n", __FUNCTION__);
         return;
     }
 
@@ -309,7 +324,7 @@ fffffff006f33e30  9c 1f 67 06 f0 ff ff ff 00 00 00 00 00 00 00 00  ..g..........
             b_off     > 0x7fffffcLL || b_off     < -0x8000000LL ||
             patch_off > 0x7fffffcLL || patch_off < -0x8000000LL
         ) {
-            printf("fsctl_shc jump too far: 0x%lx/0x%lx/0x%lx/0x%lx/0x%lx\n", open_off, close_off, bl_off, b_off, patch_off);
+            printf("fsctl_shc jump too far: 0x%" PRIx64 "/0x%" PRIx64 "/0x%" PRIx64 "/0x%" PRIx64 "/0x%" PRIx64 "\n", open_off, close_off, bl_off, b_off, patch_off);
             return;
         }
 
@@ -343,7 +358,7 @@ fffffff006f33e30  9c 1f 67 06 f0 ff ff ff 00 00 00 00 00 00 00 00  ..g..........
     int64_t put_off    = vnode_put_p           - (dyld_block + (put_idx    << 2));
     int64_t patch_off  = dyld_block - patchpoint_addr;
     if(ctx_off > 0x7fffffcLL || ctx_off < -0x8000000LL || lookup_off > 0x7fffffcLL || lookup_off < -0x8000000LL || put_off > 0x7fffffcLL || put_off < -0x8000000LL || patch_off > 0x7fffffcLL || patch_off < -0x8000000LL) {
-        printf("dyld_shc: jump too far: 0x%lx/0x%lx/0x%lx/0x%lx\n", ctx_off, lookup_off, put_off, patch_off);
+        printf("dyld_shc: jump too far: 0x%" PRIx64 "/0x%" PRIx64 "/0x%" PRIx64 "/0x%" PRIx64 "\n", ctx_off, lookup_off, put_off, patch_off);
         return;
     }
 
@@ -359,7 +374,7 @@ fffffff006f33e30  9c 1f 67 06 f0 ff ff ff 00 00 00 00 00 00 00 00  ..g..........
         uint64_t nvram_patch_to = macho_ptr_to_va(kernel_buf, shellcode_to);
         int64_t nvram_off = nvram_patch_to - nvram_patch_from;
         if(nvram_off > 0x7fffffcLL || nvram_off < -0x8000000LL) {
-            printf("nvram_shc: jump too far: 0x%lx\n", nvram_off);
+            printf("nvram_shc: jump too far: 0x%" PRIx64 "\n", nvram_off);
             return;
         }
 
@@ -385,6 +400,21 @@ fffffff006f33e30  9c 1f 67 06 f0 ff ff ff 00 00 00 00 00 00 00 00  ..g..........
             printf("%s: Disabled snapshot temporarily\n", __FUNCTION__);
         }
     }
+
+    uint64_t rootdev_patchpoint_addr = macho_ptr_to_va(kernel_buf, rootdev_patchpoint);
+    uint64_t rootdev_shellcode_addr = macho_ptr_to_va(kernel_buf, shellcode_to);
+   
+    uint64_t rootdev_shellcode_page  = rootdev_shellcode_addr  & ~0xfffULL;
+    uint64_t rootdev_patchpoint_page = rootdev_patchpoint_addr & ~0xfffULL;
+
+    int64_t rootdev_shellcode_pagediff = (rootdev_shellcode_page - rootdev_patchpoint_page) >> 12;
+
+    rootdev_patchpoint[0] = (rootdev_patchpoint[0] & 0x9f00001f) | ((rootdev_shellcode_pagediff & 0x3) << 29) | (((rootdev_shellcode_pagediff >> 2) & 0x7ffff) << 5);
+    rootdev_patchpoint[1] = (rootdev_patchpoint[1] & 0xffc003ff) | ((rootdev_shellcode_addr & 0xfff) << 10);
+
+    memcpy(shellcode_to, "spartan", 8);
+
+    shellcode_to += 2; /* 8 bytes */
 
     printf("Patching completed successfully.\n");
 }
