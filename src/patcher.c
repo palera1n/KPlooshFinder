@@ -85,7 +85,11 @@ int patch_kernel(void) {
     const char livefs_string[] = "Rooting from the live fs of a sealed volume is not allowed on a RELEASE build";
     const char* livefs_string_match = find_partial_str_in_region(livefs_string, addr_to_ptr(livefs_cstring->addr), livefs_cstring->size);
 
-    patch(patch_apfs_kext, apfs_text->addr, apfs_text->size, rootvp_string_match == NULL, livefs_string_match != NULL);
+    const char apfs_vfsop_mount_string[] = "Updating mount to read/write mode is not allowed\n";
+    const char* apfs_vfsop_mount_string_match = find_partial_str_in_region(apfs_vfsop_mount_string, addr_to_ptr(livefs_cstring->addr), livefs_cstring->size);
+
+
+    patch(patch_apfs_kext, apfs_text->addr, apfs_text->size, rootvp_string_match == NULL, livefs_string_match != NULL, apfs_vfsop_mount_string_match != NULL);
 
     struct mach_header_64 *amfi_kext = macho_find_kext(kernel_buf, "com.apple.driver.AppleMobileFileIntegrity");
     if (!amfi_kext) {
@@ -227,6 +231,15 @@ fffffff006f33e30  9c 1f 67 06 f0 ff ff ff 00 00 00 00 00 00 00 00  ..g..........
         return 1;
     } else if (constraints_string_match && !found_launch_constraints) {
         printf("%s: no launch constraints\n", __FUNCTION__);
+        return 1;
+    } else if (rootvp_string_match && !has_found_apfs_vfsop_mount) {
+        printf("%s: no APFS remount patch\n", __FUNCTION__);
+        return 1;
+    } else if (!found_apfs_mount) {
+        printf("%s: no APFS mount patch\n", __FUNCTION__);
+        return 1;
+    } else if (!livefs_string_match && !found_apfs_rename) {
+        printf("%s: no APFS rename patch\n", __FUNCTION__);
         return 1;
     }
 

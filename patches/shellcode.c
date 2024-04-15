@@ -182,7 +182,7 @@ uint32_t L_dyld_shc_epilog[2] = {
     ret
 };
 
-char L_alt_dyld_path[] = "/fs/gen/dyld";
+char L_alt_dyld_path[] = "/cores/usr/lib/dyld";
 char L_dyld_path[] = "/usr/lib/dyld";
 
 uint32_t _nvram_shc[4] = {
