@@ -168,6 +168,12 @@ bool personalized_root_hash_patch(struct pf_patch_t *patch, uint32_t *stream) {
 
 bool root_livefs_patch(struct pf_patch_t *patch, uint32_t *stream)  {
     if (!apfs_have_ssv) return false;
+    uint32_t tbnz_offset = (stream[2] >> 5) & 0x3fff;
+    uint32_t *tbnz_stream = stream + 2 + tbnz_offset;
+    uint32_t *adrp = pf_find_next(tbnz_stream, 20, 0x90000000, 0x9f00001f); // adrp
+    if (!adrp) return false;
+    const char* str = pf_follow_xref(apfs_rbuf, adrp);
+    if (strstr(str, "Rooting from the live fs of a sealed volume is not allowed on a RELEASE build") == NULL) return false;
     printf("%s: Found root_livefs\n", __FUNCTION__);
     stream[2] = 0xd503201f; // nop
     return true;
@@ -272,12 +278,12 @@ void patch_apfs_kext(void *real_buf, void *apfs_buf, size_t apfs_len, bool have_
     struct pf_patch_t personalized_patches_2 = pf_construct_patch(personalized_matches, personalized_masks, sizeof(personalized_masks) / sizeof(uint32_t), (void *) personalized_root_hash_patch);
 
     uint32_t livefs_matches[] = {
-        0xF9406108, // LDR             X8, [X8,#0xC0]
+        0xf9406008, // LDR             X8, [X...,#0xC0]
         0x3940E108, // LDRB            W8, [X8,#0x38]
         0x37280008, // TBNZ            W8, #5, loc_FFFFFFF008E60F1C
     };
     uint32_t livefs_masks[] = {
-        0xFFFFFFFF,
+        0xfffffc1f,
         0xFFFFFFFF,
         0xFFF8001F,
     };
