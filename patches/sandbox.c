@@ -11,7 +11,7 @@ uint32_t *vnode_lookup;
 uint32_t *vnode_put;
 uint32_t *vfs_context_current;
 void *sandbox_rbuf = 0;
-void *kernel_buf;
+extern void *kernel_buf;
 
 bool sandbox_has_protobox = false;
 bool found_protobox = false;
